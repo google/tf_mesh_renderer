@@ -56,7 +56,8 @@ void ExpectImageFileAndImageAreEqual(const std::string& baseline_file,
   const bool images_match = baseline_rgba == result_rgba;
 
   if (!images_match) {
-    const std::string result_output_path = "/tmp/" + comparison_name + "_result.png";
+    const std::string result_output_path =
+        "/tmp/" + comparison_name + "_result.png";
     SavePng(result_output_path, result_rgba);
   }
 

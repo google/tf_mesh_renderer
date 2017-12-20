@@ -4,17 +4,10 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-#import google3
 import os
 import tensorflow as tf
-#from google3.research.vision.facedecoder.ops.kernels import gen_rasterize_triangles as rasterize_triangles_module
-#from google3.research.vision.facedecoder.ops.kernels import gen_rasterize_triangles_grad as rasterize_triangles_grad_module
 
-#path = os.path.dirname(os.path.abspath(__file__))
-#path = tf.resource_loader.get_path_to_datafile(
-    #os.path.join(path, 'rasterize_triangles_kernel.so'))
 
-#_kernel = tf.load_op_library(path)
 rasterize_triangles_module = tf.load_op_library(
     os.path.join(os.environ['TEST_SRCDIR'],
     'tf_mesh_renderer/mesh_renderer/kernels/rasterize_triangles_kernel.so'))

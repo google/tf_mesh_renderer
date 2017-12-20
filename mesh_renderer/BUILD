@@ -5,12 +5,6 @@ py_library(
     srcs = ["mesh_renderer.py"],
     deps = [
         ":rasterize_triangles",
-        # "kernels:gen_mesh_renderer",
-        # "kernels:gen_mesh_renderer_grad",
-        # "kernels:mesh_renderer_grad_kernel",
-        # "kernels:mesh_renderer_kernel",
-        # "numpy",
-        # "tensorflow",
     ],
 )
 
@@ -21,7 +15,7 @@ py_test(
     srcs = ["mesh_renderer_test.py"],
     data = [
         "//mesh_renderer/test_data:images",
-        "//mesh_renderer/kernels:compile_the_thing",
+        "//mesh_renderer/kernels:rasterize_triangles_kernel",
     ],
     deps = [
         ":mesh_renderer",
@@ -41,14 +35,6 @@ py_library(
 py_library(
     name = "rasterize_triangles",
     srcs = ["rasterize_triangles.py"],
-    # deps = [
-    #     "//research/vision/facedecoder/ops/kernels:gen_rasterize_triangles",
-    #     "//research/vision/facedecoder/ops/kernels:gen_rasterize_triangles_grad",
-    #     "//mesh_renderer/kernels:rasterize_triangles_grad_kernel",
-    #     "//mesh_renderer/kernels:rasterize_triangles_kernel",
-    #     "//third_party/py/numpy",
-    #     "//third_party/py/tensorflow:tensorflow_google",
-    # ],
 )
 
 py_test(
@@ -58,7 +44,7 @@ py_test(
     srcs = ["rasterize_triangles_test.py"],
     data = [
         "//mesh_renderer/test_data:images",
-        "//mesh_renderer/kernels:compile_the_thing",
+        "//mesh_renderer/kernels:rasterize_triangles_kernel",
     ],
     deps = [
         ":camera_utils",

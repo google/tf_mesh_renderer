@@ -72,8 +72,8 @@ class RenderTest(tf.test.TestCase):
         target_image_name = 'Simple_Cube_%i.png' % image_id
         baseline_image_path = os.path.join(self.test_data_directory,
                                            target_image_name)
-        test_utils.expect_image_file_and_render_are_near(self, sess, baseline_image_path,
-                                               images[image_id, :, :, :])
+        test_utils.expect_image_file_and_render_are_near(
+            self, sess, baseline_image_path, images[image_id, :, :, :])
 
   def testComplexShading(self):
     """Tests specular highlights, colors, and multiple lights per image."""
@@ -164,8 +164,8 @@ class RenderTest(tf.test.TestCase):
         target_image_name = 'Colored_Cube_%i.png' % image_id
         baseline_image_path = os.path.join(self.test_data_directory,
                                            target_image_name)
-        test_utils.expect_image_file_and_render_are_near(self, sess, baseline_image_path,
-                                               images[image_id, :, :, :])
+        test_utils.expect_image_file_and_render_are_near(
+            self, sess, baseline_image_path, images[image_id, :, :, :])
         test_utils.expect_image_file_and_render_are_near(
             self, sess, baseline_image_path,
             broadcasted_images[image_id, :, :, :])
@@ -288,8 +288,8 @@ class RenderTest(tf.test.TestCase):
       target_image_name = 'Simple_Cube_0.png'
       baseline_image_path = os.path.join(self.test_data_directory,
                                          target_image_name)
-      test_utils.expect_image_file_and_render_are_near(self, sess, baseline_image_path,
-                                             desired_image)
+      test_utils.expect_image_file_and_render_are_near(
+          self, sess, baseline_image_path, desired_image)
       test_utils.expect_image_file_and_render_are_near(
           self,
           sess,

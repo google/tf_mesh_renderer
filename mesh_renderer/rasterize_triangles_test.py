@@ -54,8 +54,8 @@ class RenderTest(tf.test.TestCase):
       target_image_name = 'Simple_Triangle.png'
       baseline_image_path = os.path.join(self.test_data_directory,
                                          target_image_name)
-      test_utils.expect_image_file_and_render_are_near(self, sess, baseline_image_path,
-                                             image)
+      test_utils.expect_image_file_and_render_are_near(
+          self, sess, baseline_image_path, image)
 
   def testRendersSimpleCube(self):
     """Renders a simple cube to test the kernel and python wrapper."""
@@ -89,8 +89,8 @@ class RenderTest(tf.test.TestCase):
       target_image_name = 'Unlit_Cube_0.png'
       baseline_image_path = os.path.join(self.test_data_directory,
                                          target_image_name)
-      test_utils.expect_image_file_and_render_are_near(self, sess, baseline_image_path,
-                                             image)
+      test_utils.expect_image_file_and_render_are_near(
+          self, sess, baseline_image_path, image)
 
   def testSimpleTriangleGradientComputation(self):
     """Verifies the Jacobian matrix for a single pixel.
