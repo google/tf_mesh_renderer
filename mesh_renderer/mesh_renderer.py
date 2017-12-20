@@ -1,273 +1,13 @@
-"""Differentiable 3-D rendering of a textured triangle mesh."""
+"""Differentiable 3-D rendering of a triangle mesh."""
 
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import math
-import google3
-import tensorflow.google as tf
-from google3.research.vision.facedecoder.ops.kernels import gen_mesh_renderer as mesh_renderer_module
-from google3.research.vision.facedecoder.ops.kernels import gen_mesh_renderer_grad as mesh_renderer_grad_module
+import tensorflow as tf
 
-# This epsilon should be smaller than any valid barycentric reweighting factor
-# (i.e. the per-pixel reweighting factor used to correct for the effects of
-# perspective-incorrect barycentric interpolation). It is necessary primarily
-# because the reweighting factor will be 0 for factors outside the mesh, and we
-# need to ensure the image color and gradient outside the region of the mesh are
-# 0.
-_MINIMUM_REWEIGHTING_THRESHOLD = 1e-6
-
-# This epsilon is the minimum absolute value of a homogenous coordinate before
-# it is clipped. It should be sufficiently large such that the output of
-# the perspective divide step with this denominator still has good working
-# precision with 32 bit arithmetic, and sufficiently small so that in practice
-# vertices are almost never close enough to a clipping plane to be thresholded.
-_MINIMUM_PERSPECTIVE_DIVIDE_THRESHOLD = 1e-6
-
-
-def _compute_perspective_transform(image_width, image_height, fov_y, near_clip,
-                                   far_clip):
-  """Computes perspective transformation matrix.
-
-  Switches to left handed coordinate system for NDC at the same time.
-
-  Args:
-    image_width: int specifying desired output image width in pixels.
-    image_height: int specifying desired output image height in pixels.
-    fov_y: float specifying desired output image y field of view.
-    near_clip: float specifying near clipping plane distance.
-    far_clip: float specifying far clipping plane distance.
-
-  Returns:
-    A 4x4 float tensor that maps from right-handed points in eye space to left-
-    handed points in clip space.
-  """
-  aspect_ratio = image_width / image_height
-  focal_length_y = 1.0 / math.tan(math.radians(fov_y) / 2.0)
-  depth_range = far_clip - near_clip
-  p_22 = -(far_clip + near_clip) / depth_range
-  p_23 = -2.0 * far_clip * near_clip / depth_range
-
-  perspective_transform = tf.constant(
-      [[focal_length_y / aspect_ratio, 0, 0, 0], [0, focal_length_y, 0, 0],
-       [0, 0, p_22, p_23], [0, 0, -1, 0]],
-      dtype=tf.float32)
-  return perspective_transform
-
-
-def look_at(eye, center, world_up):
-  """Computes a camera extrinsics matrix.
-
-  Functionality mimes gluLookAt (glu/include/GLU/glu.h).
-
-  Args:
-    eye: 1-D float32 tensor with shape [3] containing the XYZ world space
-        position of the camera.
-    center: 1-D float32 tensor with shape [3] containing a position along the
-        center of the camera's gaze.
-    world_up: 1-D float32 tensor with shape [3] specifying the world's up
-        direction; the output camera will have no tilt with respect to this
-        direction.
-
-  Returns:
-    A 4x4 numpy array containing a right-handed camera extrinsics matrix that
-    maps points from world space to points in eye space.
-
-  Raises:
-    InvalidArgumentError: The arguments specify a degenerate extrinsics matrix.
-  """
-  vector_degeneracy_cutoff = 1e-6
-  forward = center - eye
-  forward_norm = tf.norm(forward, ord='euclidean')
-  tf.assert_greater(
-      forward_norm,
-      vector_degeneracy_cutoff,
-      message='Camera matrix is degenerate because eye and center are close.')
-  forward = tf.divide(forward, forward_norm)
-
-  to_side = tf.cross(forward, world_up)
-  to_side_norm = tf.norm(to_side, ord='euclidean')
-  tf.assert_greater(
-      to_side_norm,
-      vector_degeneracy_cutoff,
-      message='Camera matrix is degenerate because up and gaze are close or'
-      'because up is degenerate.')
-  to_side = tf.divide(to_side, to_side_norm)
-  cam_up = tf.cross(to_side, forward)
-
-  view_rotation = tf.reshape(
-      tf.stack(
-          [
-              to_side[0], to_side[1], to_side[2], 0, cam_up[0], cam_up[1],
-              cam_up[2], 0, -forward[0], -forward[1], -forward[2], 0, 0, 0, 0, 1
-          ],
-          axis=0), [4, 4])
-  # pyformat: disable
-  view_translation = tf.reshape(tf.stack([1., 0., 0., -eye[0],
-                                          0., 1., 0., -eye[1],
-                                          0., 0., 1., -eye[2],
-                                          0., 0., 0., 1.], axis=0), [4, 4])
-  # pyformat: enable
-  camera_matrix = tf.matmul(view_rotation, view_translation)
-  return camera_matrix
-
-
-def rasterizer(vertices,
-               vertex_attributes,
-               triangles,
-               camera_matrix,
-               image_width,
-               image_height,
-               fov_y=40.0,
-               near_clip=0.01,
-               far_clip=10.0):
-  """Rasterizes the input scene and computes interpolated vertex attributes.
-
-  Args:
-    vertices: 3-D float32 tensor with shape [batch_size, vertex_count, 3]. Each
-        triplet is an xyz position in world space.
-    vertex_attributes: 3-D float32 tensor with shape [batch_size, vertex_count,
-        attribute_channel_count]. Each attribute will be interpolated across the
-        pixels using barycentric interpolation between the vertices of the
-        pixel's triangle.
-    triangles: 2-D int32 tensor with shape [triangle_count, 3]. Each triplet
-        should contain vertex indices describing a triangle such that the
-        triangle's normal points toward the viewer if the forward order of the
-        triplet defines a clockwise winding of the vertices. Gradients with
-        respect to this tensor are not available.
-    camera_matrix: 2-D float tensor with shape [4,4] describing camera
-        extrinsics.
-    image_width: int specifying desired output image width in pixels.
-    image_height: int specifying desired output image height in pixels.
-    fov_y: float specifying desired output image y field of view in degrees.
-    near_clip: float specifying near clipping plane distance.
-    far_clip: float specifying far clipping plane distance.
-
-  Returns:
-    A tuple (alphas, pixel_attributes). The first, alphas, is a 3-D float32
-    tensor with shape [batch_size, image_height, image_width] containing
-    the alpha value at each pixel; it is approximately one for mesh pixels and
-    0.0 for background pixels. The second, pixel_attributes, is a 4-D float32
-    tensor with shape [batch_size, image_height, image_width,
-    attribute_channel_count]. It contains the interpolated vertex attributes at
-    num_pixel.
-
-  Raises:
-    ValueError: An invalid argument to the method is detected.
-  """
-  if not image_width > 0:
-    raise ValueError('Image width must be > 0.')
-  if not image_height > 0:
-    raise ValueError('Image height must be > 0.')
-  if not fov_y > 0.0:
-    raise ValueError('Y field of view must be > 0.0.')
-  if not near_clip > 0.0:
-    raise ValueError('Near clipping plane must be > 0.0.')
-  if not far_clip > near_clip:
-    raise ValueError(
-        'Far clipping plane must be greater than near clipping plane.')
-  if len(vertices.shape) != 3:
-    raise ValueError('The vertex buffer must be a 3D tensor.')
-
-  batch_size = vertices.shape[0].value
-  vertex_count = vertices.shape[1].value
-
-  # We map the coordinates to normalized device coordinates before passing
-  # the scene to the rendering kernel to keep as many ops in tensorflow as
-  # possible.
-
-  perspective_transform = _compute_perspective_transform(
-      image_width, image_height, fov_y, near_clip, far_clip)
-
-  clip_space_transform = tf.matmul(perspective_transform, camera_matrix)
-
-  # Maps vertex object space tensor into ndc coordinates.
-  flattened_vertices = tf.reshape(vertices, [-1, 3])
-  homogeneous_coord = tf.ones(
-      [flattened_vertices.shape[0], 1], dtype=tf.float32)
-  vertices_homogeneous = tf.concat([flattened_vertices, homogeneous_coord], 1)
-
-  # Vertices are given in row-major order, but the transformation pipeline is
-  # column major:
-  clip_space_points = tf.matmul(
-      vertices_homogeneous, clip_space_transform, transpose_b=True)
-
-  # Perspective divide, first thresholding the homogeneous coordinate to avoid
-  # the possibility of NaNs:
-  clip_space_points_xyz = clip_space_points[:, 0:3] * tf.sign(
-      clip_space_points[:, 3:4])
-  clip_space_points_w = tf.maximum(
-      tf.abs(clip_space_points[:, 3:4]), _MINIMUM_PERSPECTIVE_DIVIDE_THRESHOLD)
-  normalized_device_coordinates = clip_space_points_xyz / clip_space_points_w
-
-  # Reshapes to render one image at a time:
-  normalized_device_coordinates = tf.reshape(normalized_device_coordinates,
-                                             [batch_size, -1, 3])
-
-  per_image_uncorrected_barycentric_coordinates = []
-  per_image_vertex_ids = []
-  for im in xrange(vertices.shape[0]):
-    barycentric_coordinates, triangle_ids = mesh_renderer_module.mesh_renderer(
-        normalized_device_coordinates[im, :, :], triangles, image_width,
-        image_height)
-    per_image_uncorrected_barycentric_coordinates.append(
-        tf.reshape(barycentric_coordinates, [-1, 3]))
-
-    # Gathers the vertex indices now because the indices don't contain a batch
-    # identifier, and reindexes the vertex ids to point to a (batch,vertex_id)
-    vertex_ids = tf.gather(triangles, tf.reshape(triangle_ids, [-1]))
-    reindexed_ids = tf.add(vertex_ids, im * vertices.shape[1].value)
-    per_image_vertex_ids.append(reindexed_ids)
-
-  uncorrected_barycentric_coordinates = tf.concat(
-      per_image_uncorrected_barycentric_coordinates, axis=0)
-  vertex_ids = tf.concat(per_image_vertex_ids, axis=0)
-
-  # Indexes with each pixel's clip-space triangle's extrema (the pixel's
-  # 'corner points') ids to get the relevant properties for deferred shading.
-  flattened_vertex_attributes = tf.reshape(vertex_attributes,
-                                           [batch_size * vertex_count, -1])
-  corner_attributes = tf.gather(flattened_vertex_attributes, vertex_ids)
-
-  # Barycentric interpolation is linear in the reciprocal of the homogeneous
-  # W coordinate, so we use these weights to correct for the effects of
-  # perspective distortion after rasterization.
-  perspective_distortion_weights = tf.reciprocal(clip_space_points[:, 3])
-  corner_distortion_weights = tf.gather(perspective_distortion_weights,
-                                        vertex_ids)
-
-  # Apply perspective correction to the barycentric coordinates. This step is
-  # required since the rasterizer receives normalized-device coordinates (i.e.,
-  # after perspective division), so it can't apply perspective correction to the
-  # interpolated values.
-  weighted_barycentric_coordinates = tf.multiply(
-      uncorrected_barycentric_coordinates, corner_distortion_weights)
-  barycentric_reweighting_factor = tf.reduce_sum(
-      weighted_barycentric_coordinates, axis=1)
-
-  corrected_barycentric_coordinates = tf.divide(
-      weighted_barycentric_coordinates,
-      tf.expand_dims(
-          tf.maximum(barycentric_reweighting_factor,
-                     _MINIMUM_REWEIGHTING_THRESHOLD),
-          axis=1))
-
-  # Computes the pixel attributes by interpolating the known attributes at the
-  # corner points of the triangle interpolated with the barycentric coordinates.
-  weighted_vertex_attributes = tf.multiply(
-      corner_attributes,
-      tf.expand_dims(corrected_barycentric_coordinates, axis=2))
-  attributes = tf.reduce_sum(weighted_vertex_attributes, axis=1)
-  attribute_images = tf.reshape(attributes,
-                                [batch_size, image_height, image_width, -1])
-
-  # Barycentric coordinates should approximately sum to one where there is
-  # rendered geometry, but be exactly zero where there is not.
-  alphas = tf.clip_by_value(
-      tf.reduce_sum(2.0 * corrected_barycentric_coordinates, axis=1), 0.0, 1.0)
-
-  return alphas, attribute_images
+import camera_utils
+import rasterize_triangles
 
 
 def phong_shader(normals,
@@ -300,10 +40,11 @@ def phong_shader(normals,
     diffuse_colors: a 4D float32 tensor with shape [batch_size, image_height,
         image_width, 3]. The inner dimension is the diffuse RGB coefficients at
         a pixel in the range [0, 1].
-    camera_position: a 1D tensor with shape [3]. The XYZ camera position in the
-        scene. If supplied, specular reflections will be computed. If not
-        supplied, specular_colors and shininess_coefficients are expected to be
-        None. In the same coordinate space as pixel_positions.
+    camera_position: a 1D tensor with shape [batch_size, 3]. The XYZ camera
+        position in the scene. If supplied, specular reflections will be
+        computed. If not supplied, specular_colors and shininess_coefficients
+        are expected to be None. In the same coordinate space as
+        pixel_positions.
     specular_colors: a 4D float32 tensor with shape [batch_size, image_height,
         image_width, 3]. The inner dimension is the specular RGB coefficients at
         a pixel in the range [0, 1]. If None, assumed to be tf.zeros()
@@ -336,7 +77,8 @@ def phong_shader(normals,
   # Ambient component
   output_colors = tf.zeros([batch_size, image_height * image_width, 3])
   if ambient_color is not None:
-    output_colors = tf.add(output_colors, tf.expand_dims(ambient_color, axis=1))
+    ambient_reshaped = tf.expand_dims(ambient_color, axis=1)
+    output_colors = tf.add(output_colors, ambient_reshaped * diffuse_colors)
 
   # Diffuse component
   pixel_positions = tf.reshape(pixel_positions, [batch_size, -1, 3])
@@ -362,7 +104,7 @@ def phong_shader(normals,
 
   # Specular component
   if camera_position is not None:
-    camera_position = tf.reshape(camera_position, [1, 1, 3])
+    camera_position = tf.reshape(camera_position, [batch_size, 1, 3])
     mirror_reflection_direction = tf.nn.l2_normalize(
         2.0 * tf.expand_dims(normals_dot_lights, axis=3) * tf.expand_dims(
             normals, axis=1) - directions_to_lights,
@@ -473,12 +215,13 @@ def mesh_renderer(vertices,
     diffuse_colors: 3-D float32 tensor with shape [batch_size,
         vertex_count, 3]. The RGB diffuse reflection in the range [0,1] for
         each vertex.
-    camera_position: 1-D tensor with shape [3] specifying the XYZ world space
-        camera position.
-    camera_lookat: 1-D tensor with shape [3] containing an XYZ point along the
-        center of the camera's gaze.
-    camera_up: 1-D tensor with shape [3] containing the up direction for the
-        camera. The camera will have no tilt with respect to this direction.
+    camera_position: 2-D tensor with shape [batch_size, 3] or 1-D tensor with
+        shape [3] specifying the XYZ world space camera position.
+    camera_lookat: 2-D tensor with shape [batch_size, 3] or 1-D tensor with
+        shape [3] containing an XYZ point along the center of the camera's gaze.
+    camera_up: 2-D tensor with shape [batch_size, 3] or 1-D tensor with shape
+        [3] containing the up direction for the camera. The camera will have no
+        tilt with respect to this direction.
     light_positions: a 3-D tensor with shape [batch_size, light_count, 3]. The
         XYZ position of each light in the scene. In the same coordinate space as
         pixel_positions.
@@ -498,9 +241,12 @@ def mesh_renderer(vertices,
     ambient_color: a 2D tensor with shape [batch_size, 3]. The RGB ambient
         color, which is added to each pixel in the scene. If None, it is
         assumed to be black.
-    fov_y: float specifying desired output image y field of view in degrees.
-    near_clip: float specifying near clipping plane distance.
-    far_clip: float specifying far clipping plane distance.
+    fov_y: float, 0D tensor, or 1D tensor with shape [batch_size] specifying
+        desired output image y field of view in degrees.
+    near_clip: float, 0D tensor, or 1D tensor with shape [batch_size] specifying
+        near clipping plane distance.
+    far_clip: float, 0D tensor, or 1D tensor with shape [batch_size] specifying
+        far clipping plane distance.
 
   Returns:
     A 4-D float32 tensor of shape [batch_size, image_height, image_width, 4]
@@ -517,6 +263,7 @@ def mesh_renderer(vertices,
   """
   if len(vertices.shape) != 3:
     raise ValueError('Vertices must have shape [batch_size, vertex_count, 3].')
+  batch_size = vertices.shape[0].value
   if len(normals.shape) != 3:
     raise ValueError('Normals must have shape [batch_size, vertex_count, 3].')
   if len(light_positions.shape) != 3:
@@ -528,14 +275,44 @@ def mesh_renderer(vertices,
   if len(diffuse_colors.shape) != 3:
     raise ValueError(
         'vertex_diffuse_colors must have shape [batch_size, vertex_count, 3].')
-  if ambient_color is not None and len(ambient_color.shape) != 2:
+  if (ambient_color is not None and
+      ambient_color.get_shape().as_list() != [batch_size, 3]):
     raise ValueError('Ambient_color must have shape [batch_size, 3].')
-  if camera_position.get_shape().as_list() != [3]:
-    raise ValueError('Camera_position must have shape [3]')
-  if camera_lookat.get_shape().as_list() != [3]:
-    raise ValueError('Camera_lookat must have shape [3]')
-  if camera_up.get_shape().as_list() != [3]:
-    raise ValueError('Camera_up must have shape [3]')
+  if camera_position.get_shape().as_list() == [3]:
+    camera_position = tf.tile(
+        tf.expand_dims(camera_position, axis=0), [batch_size, 1])
+  elif camera_position.get_shape().as_list() != [batch_size, 3]:
+    raise ValueError('Camera_position must have shape [batch_size, 3]')
+  if camera_lookat.get_shape().as_list() == [3]:
+    camera_lookat = tf.tile(
+        tf.expand_dims(camera_lookat, axis=0), [batch_size, 1])
+  elif camera_lookat.get_shape().as_list() != [batch_size, 3]:
+    raise ValueError('Camera_lookat must have shape [batch_size, 3]')
+  if camera_up.get_shape().as_list() == [3]:
+    camera_up = tf.tile(tf.expand_dims(camera_up, axis=0), [batch_size, 1])
+  elif camera_up.get_shape().as_list() != [batch_size, 3]:
+    raise ValueError('Camera_up must have shape [batch_size, 3]')
+  if isinstance(fov_y, float):
+    fov_y = tf.constant(batch_size * [fov_y], dtype=tf.float32)
+  elif not fov_y.get_shape().as_list():
+    fov_y = tf.tile(tf.expand_dims(fov_y, 0), [batch_size])
+  elif fov_y.get_shape().as_list() != [batch_size]:
+    raise ValueError('Fov_y must be a float, a 0D tensor, or a 1D tensor with'
+                     'shape [batch_size]')
+  if isinstance(near_clip, float):
+    near_clip = tf.constant(batch_size * [near_clip], dtype=tf.float32)
+  elif not near_clip.get_shape().as_list():
+    near_clip = tf.tile(tf.expand_dims(near_clip, 0), [batch_size])
+  elif near_clip.get_shape().as_list() != [batch_size]:
+    raise ValueError('Near_clip must be a float, a 0D tensor, or a 1D tensor'
+                     'with shape [batch_size]')
+  if isinstance(far_clip, float):
+    far_clip = tf.constant(batch_size * [far_clip], dtype=tf.float32)
+  elif not far_clip.get_shape().as_list():
+    far_clip = tf.tile(tf.expand_dims(far_clip, 0), [batch_size])
+  elif far_clip.get_shape().as_list() != [batch_size]:
+    raise ValueError('Far_clip must be a float, a 0D tensor, or a 1D tensor'
+                     'with shape [batch_size]')
   if specular_colors is not None and shininess_coefficients is None:
     raise ValueError(
         'Specular colors were supplied without shininess coefficients.')
@@ -569,18 +346,17 @@ def mesh_renderer(vertices,
   else:
     vertex_attributes = tf.concat([normals, vertices, diffuse_colors], axis=2)
 
-  camera_matrix = look_at(camera_position, camera_lookat, camera_up)
+  camera_matrices = camera_utils.look_at(camera_position, camera_lookat,
+                                         camera_up)
 
-  alphas, pixel_attributes = rasterizer(
-      vertices,
-      vertex_attributes,
-      triangles,
-      camera_matrix,
-      image_width,
-      image_height,
-      fov_y=fov_y,
-      near_clip=near_clip,
-      far_clip=far_clip)
+  perspective_transforms = camera_utils.perspective(image_width / image_height,
+                                                    fov_y, near_clip, far_clip)
+
+  clip_space_transforms = tf.matmul(perspective_transforms, camera_matrices)
+
+  pixel_attributes = rasterize_triangles.rasterize_triangles(
+      vertices, vertex_attributes, triangles, clip_space_transforms,
+      image_width, image_height, [-1] * vertex_attributes.shape[2].value)
 
   # Extract the interpolated vertex attributes from the pixel buffer and
   # supply them to the shader:
@@ -596,9 +372,11 @@ def mesh_renderer(vertices,
     else:
       shininess_coefficients = tf.reshape(shininess_coefficients, [-1, 1, 1])
 
+  pixel_mask = tf.cast(tf.reduce_any(diffuse_colors >= 0, axis=3), tf.float32)
+
   renders = phong_shader(
       normals=pixel_normals,
-      alphas=alphas,
+      alphas=pixel_mask,
       pixel_positions=pixel_positions,
       light_positions=light_positions,
       light_intensities=light_intensities,
@@ -608,10 +386,3 @@ def mesh_renderer(vertices,
       shininess_coefficients=shininess_coefficients,
       ambient_color=ambient_color)
   return renders
-
-
-@tf.RegisterGradient('MeshRenderer')
-def _mesh_renderer_grad(op, df_dbarys, _):
-  return mesh_renderer_grad_module.mesh_renderer_grad(
-      op.inputs[0], op.inputs[1], op.outputs[0], op.outputs[1], df_dbarys,
-      op.get_attr('image_width'), op.get_attr('image_height')), None

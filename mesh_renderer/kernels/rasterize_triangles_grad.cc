@@ -20,8 +20,7 @@ constexpr float kMinimumTriangleArea = 1e-13;
 
 }  // namespace
 
-namespace research_vision {
-namespace facedecoder {
+namespace tf_mesh_renderer {
 
 using ::tensorflow::DEVICE_CPU;
 using ::tensorflow::OpKernel;
@@ -33,7 +32,7 @@ using ::tensorflow::Tensor;
 using ::tensorflow::TensorShape;
 using ::tensorflow::errors::InvalidArgument;
 
-REGISTER_OP("MeshRendererGrad")
+REGISTER_OP("RasterizeTrianglesGrad")
     .Input("vertices: float32")
     .Input("triangles: int32")
     .Input("barycentric_coordinates: float32")
@@ -43,9 +42,9 @@ REGISTER_OP("MeshRendererGrad")
     .Attr("image_height: int")
     .Output("df_dvertices: float32");
 
-class MeshRendererGradOp : public OpKernel {
+class RasterizeTrianglesGradOp : public OpKernel {
  public:
-  explicit MeshRendererGradOp(OpKernelConstruction* context)
+  explicit RasterizeTrianglesGradOp(OpKernelConstruction* context)
       : OpKernel(context) {
     OP_REQUIRES_OK(context, context->GetAttr("image_width", &image_width_));
     OP_REQUIRES(context, image_width_ > 0,
@@ -57,7 +56,7 @@ class MeshRendererGradOp : public OpKernel {
         InvalidArgument("Image height must be > 0, got ", image_height_));
   }
 
-  ~MeshRendererGradOp() override {}
+  ~RasterizeTrianglesGradOp() override {}
 
   void Compute(OpKernelContext* context) override {
     const Tensor& vertices_tensor = context->input(0);
@@ -65,7 +64,7 @@ class MeshRendererGradOp : public OpKernel {
         context,
         PartialTensorShape({-1, 3}).IsCompatibleWith(vertices_tensor.shape()),
         InvalidArgument(
-            "MeshRendererGrad expects vertices to have shape (-1, 3)."));
+            "RasterizeTrianglesGrad expects vertices to have shape (-1, 3)."));
     auto vertices_flat = vertices_tensor.flat<float>();
     const unsigned int vertex_count = vertices_flat.size() / 3;
     const float* vertices = vertices_flat.data();
@@ -74,17 +73,18 @@ class MeshRendererGradOp : public OpKernel {
     OP_REQUIRES(
         context,
         PartialTensorShape({-1, 3}).IsCompatibleWith(triangles_tensor.shape()),
-        InvalidArgument("MeshRendererGrad expects triangles to be a matrix."));
+        InvalidArgument(
+            "RasterizeTrianglesGrad expects triangles to be a matrix."));
     auto triangles_flat = triangles_tensor.flat<int>();
     const int* triangles = triangles_flat.data();
 
     const Tensor& barycentric_coordinates_tensor = context->input(2);
-    OP_REQUIRES(
-        context,
-        TensorShape({image_height_, image_width_, 3}) ==
-            barycentric_coordinates_tensor.shape(),
-        InvalidArgument("MeshRendererGrad expects barycentric_coordinates to "
-                        "have shape {image_height, image_width, 3}"));
+    OP_REQUIRES(context,
+                TensorShape({image_height_, image_width_, 3}) ==
+                    barycentric_coordinates_tensor.shape(),
+                InvalidArgument(
+                    "RasterizeTrianglesGrad expects barycentric_coordinates to "
+                    "have shape {image_height, image_width, 3}"));
     auto barycentric_coordinates_flat =
         barycentric_coordinates_tensor.flat<float>();
     const float* barycentric_coordinates = barycentric_coordinates_flat.data();
@@ -94,8 +94,9 @@ class MeshRendererGradOp : public OpKernel {
         context,
         TensorShape({image_height_, image_width_}) ==
             triangle_ids_tensor.shape(),
-        InvalidArgument("MeshRendererGrad expected triangle_ids to have shape "
-                        " {image_height, image_width}"));
+        InvalidArgument(
+            "RasterizeTrianglesGrad expected triangle_ids to have shape "
+            " {image_height, image_width}"));
     auto triangle_ids_flat = triangle_ids_tensor.flat<int>();
     const int* triangle_ids = triangle_ids_flat.data();
 
@@ -106,8 +107,9 @@ class MeshRendererGradOp : public OpKernel {
         context,
         TensorShape({image_height_, image_width_, 3}) ==
             df_dbarycentric_coordinates_tensor.shape(),
-        InvalidArgument("MeshRendererGrad expects df_dbarycentric_coordinates "
-                        "to have shape {image_height, image_width, 3}"));
+        InvalidArgument(
+            "RasterizeTrianglesGrad expects df_dbarycentric_coordinates "
+            "to have shape {image_height, image_width, 3}"));
     auto df_dbarycentric_coordinates_flat =
         df_dbarycentric_coordinates_tensor.flat<float>();
     const float* df_dbarycentric_coordinates =
@@ -256,8 +258,7 @@ class MeshRendererGradOp : public OpKernel {
   int image_height_;
 };
 
-REGISTER_KERNEL_BUILDER(Name("MeshRendererGrad").Device(DEVICE_CPU),
-                        MeshRendererGradOp);
+REGISTER_KERNEL_BUILDER(Name("RasterizeTrianglesGrad").Device(DEVICE_CPU),
+                        RasterizeTrianglesGradOp);
 
-}  // namespace facedecoder
-}  // namespace research_vision
+}  // namespace tf_mesh_renderer
