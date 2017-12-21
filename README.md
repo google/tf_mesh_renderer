@@ -1,4 +1,4 @@
-This is a differentiable, 3D mesh renderer using TensorFlow and OpenGL.
+This is a differentiable, 3D mesh renderer using TensorFlow.
 
 This is not an official Google product.
 
