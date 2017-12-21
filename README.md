@@ -24,7 +24,8 @@ the mesh is smooth. The main source of error occurs at occlusion boundaries, and
 particularly at the edge of an open mesh, where the background appears opposite
 the triangle's edge.
 
---How to Build
+How to Build
+------------
 
 Follow the instructions to [install TensorFlow using virtualenv](https://www.tensorflow.org/install/install_linux#installing_with_virtualenv).
 
