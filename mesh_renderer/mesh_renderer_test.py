@@ -83,7 +83,7 @@ class RenderTest(tf.test.TestCase):
     with self.test_session() as sess:
       images = sess.run(rendered, feed_dict={})
       for image_id in range(images.shape[0]):
-        target_image_name = 'Simple_Cube_%i.png' % image_id
+        target_image_name = 'Gray_Cube_%i.png' % image_id
         baseline_image_path = os.path.join(self.test_data_directory,
                                            target_image_name)
         test_utils.expect_image_file_and_render_are_near(
@@ -299,7 +299,7 @@ class RenderTest(tf.test.TestCase):
         sess.run([loss, opt_func])
       final_image, desired_image = sess.run([render, desired_render])
 
-      target_image_name = 'Simple_Cube_0.png'
+      target_image_name = 'Gray_Cube_0.png'
       baseline_image_path = os.path.join(self.test_data_directory,
                                          target_image_name)
       test_utils.expect_image_file_and_render_are_near(

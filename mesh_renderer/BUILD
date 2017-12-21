@@ -11,7 +11,6 @@ py_library(
 py_test(
     name = "mesh_renderer_test",
     size = "medium",
-    timeout = "long",
     srcs = ["mesh_renderer_test.py"],
     data = [
         "//mesh_renderer/test_data:images",
@@ -39,8 +38,6 @@ py_library(
 
 py_test(
     name = "rasterize_triangles_test",
-    size = "medium",
-    timeout = "long",
     srcs = ["rasterize_triangles_test.py"],
     data = [
         "//mesh_renderer/test_data:images",
