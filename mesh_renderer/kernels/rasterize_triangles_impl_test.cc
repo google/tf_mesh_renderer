@@ -80,15 +80,30 @@ void ExpectImageFileAndImageAreEqual(const std::string& baseline_file,
 
 class RasterizeTrianglesImplTest : public ::testing::Test {
  protected:
-  RasterizeTrianglesImplTest() {
-    const int kNumPixels = kImageHeight * kImageWidth;
-    const float kClearDepth = 1.0;
+  void CallRasterizeTrianglesImpl(const float* vertices, const int32* triangles,
+                                  int32 triangle_count) {
+    const int num_pixels = image_height_ * image_width_;
+    barycentrics_buffer_.resize(num_pixels * 3);
+    triangle_ids_buffer_.resize(num_pixels);
 
-    barycentrics_buffer_.resize(kNumPixels * 3);
-    triangle_ids_buffer_.resize(kNumPixels);
-    z_buffer_.resize(kNumPixels, kClearDepth);
+    constexpr float kClearDepth = 1.0;
+    z_buffer_.resize(num_pixels, kClearDepth);
+
+    RasterizeTrianglesImpl(vertices, triangles, triangle_count, image_width_,
+                           image_height_, triangle_ids_buffer_.data(),
+                           barycentrics_buffer_.data(), z_buffer_.data());
   }
 
+  // Expects that a pixel is covered by verifying that its barycentric
+  // coordinates sum to one.
+  void ExpectIsCovered(int x, int y) const {
+    constexpr float kEpsilon = 1e-6f;
+    auto it = barycentrics_buffer_.begin() + y * image_width_ * 3 + x * 3;
+    EXPECT_NEAR(*it + *(it + 1) + *(it + 2), 1.0, kEpsilon);
+  }
+
+  int image_height_ = 480;
+  int image_width_ = 640;
   std::vector<float> barycentrics_buffer_;
   std::vector<int32> triangle_ids_buffer_;
   std::vector<float> z_buffer_;
@@ -99,9 +114,7 @@ TEST_F(RasterizeTrianglesImplTest, CanRasterizeTriangle) {
                                        0.3,  0.5,  -0.5, 0.3};
   const std::vector<int32> triangles = {0, 1, 2};
 
-  RasterizeTrianglesImpl(vertices.data(), triangles.data(), 1, kImageWidth,
-                         kImageHeight, triangle_ids_buffer_.data(),
-                         barycentrics_buffer_.data(), z_buffer_.data());
+  CallRasterizeTrianglesImpl(vertices.data(), triangles.data(), 1);
   ExpectImageFileAndImageAreEqual("Simple_Triangle.png", barycentrics_buffer_,
                                   "triangle", "simple triangle does not match");
 }
@@ -111,13 +124,53 @@ TEST_F(RasterizeTrianglesImplTest, CanRasterizeTetrahedron) {
                                        0.5,  -0.5, 0.3, 0.0, 0.0, 0.0};
   const std::vector<int32> triangles = {0, 2, 1, 0, 1, 3, 1, 2, 3, 2, 0, 3};
 
-  RasterizeTrianglesImpl(vertices.data(), triangles.data(), 4, kImageWidth,
-                         kImageHeight, triangle_ids_buffer_.data(),
-                         barycentrics_buffer_.data(), z_buffer_.data());
+  CallRasterizeTrianglesImpl(vertices.data(), triangles.data(), 4);
 
   ExpectImageFileAndImageAreEqual("Simple_Tetrahedron.png",
                                   barycentrics_buffer_, "tetrahedron",
                                   "simple tetrahedron does not match");
+}
+
+TEST_F(RasterizeTrianglesImplTest, WorksWhenPixelIsOnTriangleEdge) {
+  // Verifies that a pixel that lies exactly on a triangle edge is considered
+  // inside the triangle.
+  image_width_ = 641;
+  const int x_pixel = image_width_ / 2;
+  const float x_ndc = 0.0;
+  constexpr int yPixel = 5;
+
+  const std::vector<float> vertices = {x_ndc, -1.0, 0.5,  x_ndc, 1.0,
+                                       0.5,   0.5,  -1.0, 0.5};
+  {
+    const std::vector<int32> triangles = {0, 1, 2};
+
+    CallRasterizeTrianglesImpl(vertices.data(), triangles.data(), 1);
+
+    ExpectIsCovered(x_pixel, yPixel);
+  }
+  {
+    // Test the triangle with the same vertices in reverse order.
+    const std::vector<int32> triangles = {2, 1, 0};
+
+    CallRasterizeTrianglesImpl(vertices.data(), triangles.data(), 1);
+
+    ExpectIsCovered(x_pixel, yPixel);
+  }
+}
+
+TEST_F(RasterizeTrianglesImplTest, CoversEdgePixelsOfImage) {
+  // Verifies that the pixels along image edges are correct covered.
+
+  const std::vector<float> vertices = {-1.0, -1.0, 0.0, 1.0,  -1.0, 0.0,
+                                       1.0,  1.0,  0.0, -1.0, 1.0,  0.0};
+  const std::vector<int32> triangles = {0, 1, 2, 0, 2, 3};
+
+  CallRasterizeTrianglesImpl(vertices.data(), triangles.data(), 2);
+
+  ExpectIsCovered(0, 0);
+  ExpectIsCovered(image_width_ - 1, 0);
+  ExpectIsCovered(image_width_ - 1, image_height_ - 1);
+  ExpectIsCovered(0, image_height_ - 1);
 }
 
 }  // namespace

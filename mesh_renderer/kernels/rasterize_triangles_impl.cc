@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <algorithm>
+#include <cmath>
 
 #include "rasterize_triangles_impl.h"
 
@@ -59,12 +60,14 @@ bool IsCCW(int32 v0x, int32 v0y, int32 v1x, int32 v1y, int32 px, int32 py) {
 // Accepts both front-facing and back-facing triangles.
 bool PixelIsInsideTriangle(int32 v0x, int32 v0y, int32 v1x, int32 v1y,
                            int32 v2x, int32 v2y, int32 px, int32 py) {
+  // Returns true if the point is counter clockwise to all the edges of either
+  // the front facing or back facing triangle.
   return (IsCCW(v0x, v0y, v1x, v1y, px, py) &&
           IsCCW(v1x, v1y, v2x, v2y, px, py) &&
           IsCCW(v2x, v2y, v0x, v0y, px, py)) ||
-         (!IsCCW(v0x, v0y, v1x, v1y, px, py) &&
-          !IsCCW(v1x, v1y, v2x, v2y, px, py) &&
-          !IsCCW(v2x, v2y, v0x, v0y, px, py));
+         (IsCCW(v1x, v1y, v0x, v0y, px, py) &&
+          IsCCW(v2x, v2y, v1x, v1y, px, py) &&
+          IsCCW(v0x, v0y, v2x, v2y, px, py));
 }
 
 }  // namespace
@@ -90,10 +93,10 @@ void RasterizeTrianglesImpl(const float* vertices, const int32* triangles,
 
     // Find the triangle bounding box enlarged to the nearest integer and
     // clamped to the image boundaries.
-    const int left = ClampedIntegerMin(v0x, v1x, v2x, 0, image_width - 1);
-    const int right = ClampedIntegerMax(v0x, v1x, v2x, 0, image_width - 1);
-    const int bottom = ClampedIntegerMin(v0y, v1y, v2y, 0, image_height - 1);
-    const int top = ClampedIntegerMax(v0y, v1y, v2y, 0, image_height - 1);
+    const int left = ClampedIntegerMin(v0x, v1x, v2x, 0, image_width);
+    const int right = ClampedIntegerMax(v0x, v1x, v2x, 0, image_width);
+    const int bottom = ClampedIntegerMin(v0y, v1y, v2y, 0, image_height);
+    const int top = ClampedIntegerMax(v0y, v1y, v2y, 0, image_height);
 
     // Convert coordinates to fixed-point to make triangle intersection
     // testing consistent and prevent cracks.
