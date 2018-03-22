@@ -161,29 +161,18 @@ class RasterizeTrianglesGradOp : public OpKernel {
       const int* vertices_at_current_pixel =
           &triangles[3 * triangle_at_current_pixel];
 
-      // 'Unrotated' values are those that are invariant to the value of the
-      // iteration variable vertex_rotation, described below.
-      const int unrotated_v0_id = 3 * vertices_at_current_pixel[0];
-      const int unrotated_v1_id = 3 * vertices_at_current_pixel[1];
-      const int unrotated_v2_id = 3 * vertices_at_current_pixel[2];
+      // Extract vertex indices for the current triangle.
+      const int v0_id = 3 * vertices_at_current_pixel[0];
+      const int v1_id = 3 * vertices_at_current_pixel[1];
+      const int v2_id = 3 * vertices_at_current_pixel[2];
 
-      // Extract the x,y components of the unrotated vertices' normalized
-      // device coordinates to compute quantities invariant to the system
-      // rotation:
-      const float unrotated_v0x = vertices[unrotated_v0_id];
-      const float unrotated_v0y = vertices[unrotated_v0_id + 1];
-      const float unrotated_v1x = vertices[unrotated_v1_id];
-      const float unrotated_v1y = vertices[unrotated_v1_id + 1];
-      const float unrotated_v2x = vertices[unrotated_v2_id];
-      const float unrotated_v2y = vertices[unrotated_v2_id + 1];
-
-      // px and py, the x and y components of the 3D position represented at the
-      // current pixel, are computed by barycentric interpolation of the corner
-      // vertex positions:
-      const float px =
-          b0 * unrotated_v0x + b1 * unrotated_v1x + b2 * unrotated_v2x;
-      const float py =
-          b0 * unrotated_v0y + b1 * unrotated_v1y + b2 * unrotated_v2y;
+      // Extract x,y components of the vertices' normalized device coordinates.
+      const float v0x = vertices[v0_id];
+      const float v0y = vertices[v0_id + 1];
+      const float v1x = vertices[v1_id];
+      const float v1y = vertices[v1_id + 1];
+      const float v2x = vertices[v2_id];
+      const float v2y = vertices[v2_id + 1];
 
       // The derivatives share a common denominator, as the screen space
       // area of the triangle is common to all three vertices.
@@ -191,79 +180,40 @@ class RasterizeTrianglesGradOp : public OpKernel {
       // parallelogram given by the screen space cross product), but we only use
       // the ratio of areas, and we compute all areas this way.
       const float triangle_area =
-          unrotated_v0y * unrotated_v1x - unrotated_v0x * unrotated_v1y -
-          unrotated_v0y * unrotated_v2x + unrotated_v1y * unrotated_v2x +
-          unrotated_v0x * unrotated_v2y - unrotated_v1x * unrotated_v2y;
-
-      if (triangle_area < kMinimumTriangleArea) {
+          (v1x - v0x) * (v2y - v0y) - (v1y - v0y) * (v2x - v0x);
+      // Same calculation applies to clockwise and counter-clockwise triangles.
+      if (std::abs(triangle_area) < kMinimumTriangleArea) {
         continue;
       }
-      const float triangle_area_sqr = triangle_area * triangle_area;
 
-      // We need to compute the partials of each of the three barycentrics
-      // with respect to each of the six (corner vertex, {x,y}) pairs. However,
-      // the choice of vertex names 0, 1, and 2 is arbitrary as long as the
-      // order is consistent with respect to the clockwise winding. We compute
-      // the system with respect to one such choice, and then rotate our
-      // reference frame twice to get the derivatives with respect to the other
-      // two corner vertices.
-      for (int vertex_rotation = 0; vertex_rotation < 3; ++vertex_rotation) {
-        const int v0_id = vertices_at_current_pixel[vertex_rotation];
-        const int v1_id = vertices_at_current_pixel[(1 + vertex_rotation) % 3];
-        const int v2_id = vertices_at_current_pixel[(2 + vertex_rotation) % 3];
+      // Derivatives of all three baricentric coordinates with respect to the
+      // x-y coordinates of a single vertex share a common factor.
+      const float db_dv0 = b0 / triangle_area;
+      const float db_dv1 = b1 / triangle_area;
+      const float db_dv2 = b2 / triangle_area;
 
-        // To compute the derivatives at the current pixel, we need the x and y
-        // 3D position components of the three corner vertices for the triangle
-        // this pixel represents:
-        const float v0x = vertices[3 * v0_id];
-        const float v0y = vertices[3 * v0_id + 1];
-        const float v1x = vertices[3 * v1_id];
-        const float v1y = vertices[3 * v1_id + 1];
-        const float v2x = vertices[3 * v2_id];
-        const float v2y = vertices[3 * v2_id + 1];
+      // Derivatives of barycentric coordinates with respect to x-y coordinates
+      // of a single vertex differ by a simple constant.
+      const float db0_dvx = v2y - v1y;
+      const float db0_dvy = v1x - v2x;
+      const float db1_dvx = v0y - v2y;
+      const float db1_dvy = v2x - v0x;
+      const float db2_dvx = v1y - v0y;
+      const float db2_dvy = v0x - v1x;
 
-        // We factor out all shared elements of the gradients to create a
-        // single multiplier for the vertex v0.
-        const float vertex_multiplier =
-            (py * (v2x - v1x) + px * (v1y - v2y) + v1x * v2y - v1y * v2x) /
-            triangle_area_sqr;
+      // Derivatives of the final function with respect to x coordinate of any
+      // vertex share a common factor, as do those with respect to y coordinate.
+      const float df_dvx =
+          df_db0 * db0_dvx + df_db1 * db1_dvx + df_db2 * db2_dvx;
+      const float df_dvy =
+          df_db0 * db0_dvy + df_db1 * db1_dvy + df_db2 * db2_dvy;
 
-        // Having factored out other components of the gradients, these are the
-        // only differing values:
-        const float db_dv0_rotated[6] = {(v2y - v1y), (v1x - v2x), (v0y - v2y),
-                                         (v2x - v0x), (v1y - v0y), (v0x - v1x)};
-
-        // These indices invert the vertex rotation- i.e. if vertex 0 -> 2,
-        // then inverted_v2_idx := 0. They allow us to permute the barycentric
-        // coordinates back to their consistent indices with respect to the
-        // input tensor.
-        const int inverted_v0_idx = (3 - vertex_rotation) % 3;
-        const int inverted_v1_idx = (4 - vertex_rotation) % 3;
-        const int inverted_v2_idx = (5 - vertex_rotation) % 3;
-
-        // By undoing the rotation, we get the standard (flattened) Jacobian
-        // matrix of the three consistently named barycentric coordinates at the
-        // pixel with respect to the x and y coordinates of vertex 0:
-        const float db_dv0[6] = {db_dv0_rotated[2 * inverted_v0_idx],
-                                 db_dv0_rotated[2 * inverted_v0_idx + 1],
-                                 db_dv0_rotated[2 * inverted_v1_idx],
-                                 db_dv0_rotated[2 * inverted_v1_idx + 1],
-                                 db_dv0_rotated[2 * inverted_v2_idx],
-                                 db_dv0_rotated[2 * inverted_v2_idx + 1]};
-
-        // We need to compute df/dverts = matmul(df/dbarycentric_coordinates,
-        // dbarycentric_coordinates/dvertex_positions) without explicitly
-        // forming the large sparse matrix dbarys/dverts. We just computed six
-        // values from dbarycentric_coordinates/dvertex_positions above, and so
-        // we bin the contributions of those matrix entries to the overall
-        // multiplication result, which is the final output tensor.
-        df_dvertices[3 * v0_id] +=
-            vertex_multiplier *
-            (df_db0 * db_dv0[0] + df_db1 * db_dv0[2] + df_db2 * db_dv0[4]);
-        df_dvertices[3 * v0_id + 1] +=
-            vertex_multiplier *
-            (df_db0 * db_dv0[1] + df_db1 * db_dv0[3] + df_db2 * db_dv0[5]);
-      }
+      df_dvertices[v0_id] += db_dv0 * df_dvx;
+      df_dvertices[v0_id + 1] += db_dv0 * df_dvy;
+      df_dvertices[v1_id] += db_dv1 * df_dvx;
+      df_dvertices[v1_id + 1] += db_dv1 * df_dvy;
+      df_dvertices[v2_id] += db_dv2 * df_dvx;
+      df_dvertices[v2_id + 1] += db_dv2 * df_dvy;
     }
   }
 
