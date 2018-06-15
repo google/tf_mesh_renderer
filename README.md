@@ -32,3 +32,20 @@ Follow the instructions to [install TensorFlow using virtualenv](https://www.ten
 Build and run tests using Bazel from inside the (tensorflow) virtualenv:
 
 `(tensorflow)$ bazel test ...`
+
+Citation
+--------
+
+If you use this renderer in your research, please cite [this paper](http://openaccess.thecvf.com/content_cvpr_2018/html/Genova_Unsupervised_Training_for_CVPR_2018_paper.html "CVF Version"):
+
+*Unsupervised Training for 3D Morphable Model Regression*. Kyle Genova, Forrester Cole, Aaron Maschinot, Aaron Sarna, Daniel Vlasic, and William T. Freeman. CVPR 2018, pp. 8377-8386.
+
+```
+@InProceedings{Genova_2018_CVPR,
+  author = {Genova, Kyle and Cole, Forrester and Maschinot, Aaron and Sarna, Aaron and Vlasic, Daniel and Freeman, William T.},
+  title = {Unsupervised Training for 3D Morphable Model Regression},
+  booktitle = {The IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
+  month = {June},
+  year = {2018}
+}
+```
