@@ -31,7 +31,11 @@ Follow the instructions to [install TensorFlow using virtualenv](https://www.ten
 
 Build and run tests using Bazel from inside the (tensorflow) virtualenv:
 
-`(tensorflow)$ bazel test ...`
+`(tensorflow)$ ./runtests.sh`
+
+The script calls the Bazel rules using the Python interpreter at
+`$VIRTUAL_ENV/bin/python`. If you aren't using virtualenv, `bazel test ...` may
+be sufficient.
 
 Citation
 --------

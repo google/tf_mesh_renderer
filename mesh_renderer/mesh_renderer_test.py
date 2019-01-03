@@ -174,7 +174,7 @@ class RenderTest(tf.test.TestCase):
       images, broadcasted_images = sess.run(
           [tonemapped_renders, tonemapped_broadcasted_renders], feed_dict={})
 
-      for image_id in xrange(images.shape[0]):
+      for image_id in range(images.shape[0]):
         target_image_name = 'Colored_Cube_%i.png' % image_id
         baseline_image_path = os.path.join(self.test_data_directory,
                                            target_image_name)

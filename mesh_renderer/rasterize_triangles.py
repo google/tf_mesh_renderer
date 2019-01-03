@@ -108,7 +108,7 @@ def rasterize_triangles(vertices, attributes, triangles, projection_matrices,
 
   per_image_uncorrected_barycentric_coordinates = []
   per_image_vertex_ids = []
-  for im in xrange(vertices.shape[0]):
+  for im in range(vertices.shape[0]):
     barycentric_coords, triangle_ids, _ = (
         rasterize_triangles_module.rasterize_triangles(
             normalized_device_coordinates[im, :, :], triangles, image_width,
