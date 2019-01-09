@@ -41,65 +41,72 @@ class RenderTest(tf.test.TestCase):
          [4, 5, 1], [1, 0, 4], [5, 6, 2], [2, 1, 5], [7, 4, 0], [0, 3, 7]],
         dtype=tf.int32)
 
-  def testRendersSimpleTriangle(self):
-    """Directly renders a rasterized triangle's barycentric coordinates.
-
-    Tests only the kernel (rasterize_triangles_module).
-    """
-    ndc_init = np.array(
-        [[-0.5, -0.5, 0.8], [0.0, 0.5, 0.3], [0.5, -0.5, 0.3]],
-        dtype=np.float32)
-
-    image_height = 480
-    image_width = 640
-
-    normalized_device_coordinates = tf.constant(ndc_init)
-    triangles = tf.constant([[0, 1, 2]], dtype=tf.int32)
-
-    rendered_coordinates, _, _ = (
-        rasterize_triangles.rasterize_triangles_module.rasterize_triangles(
-            normalized_device_coordinates, triangles, image_width,
-            image_height))
-    rendered_coordinates = tf.concat(
-        [rendered_coordinates,
-         tf.ones([image_height, image_width, 1])], axis=2)
-    with self.test_session() as sess:
-      image = rendered_coordinates.eval()
-      target_image_name = 'Simple_Triangle.png'
-      baseline_image_path = os.path.join(self.test_data_directory,
-                                         target_image_name)
-      test_utils.expect_image_file_and_render_are_near(
-          self, sess, baseline_image_path, image)
-
-  def testRendersSimpleCube(self):
-    """Renders a simple cube to test the kernel and python wrapper."""
-
     tf_float = lambda x: tf.constant(x, dtype=tf.float32)
     # camera position:
     eye = tf_float([[2.0, 3.0, 6.0]])
     center = tf_float([[0.0, 0.0, 0.0]])
     world_up = tf_float([[0.0, 1.0, 0.0]])
-    image_width = 640
-    image_height = 480
+
+    self.image_width = 640
+    self.image_height = 480
 
     look_at = camera_utils.look_at(eye, center, world_up)
-    perspective = camera_utils.perspective(image_width / image_height,
-                                           tf_float([40.0]), tf_float([0.01]),
-                                           tf_float([10.0]))
+    perspective = camera_utils.perspective(
+        self.image_width / self.image_height,
+        tf_float([40.0]), tf_float([0.01]),
+        tf_float([10.0]))
+    self.projection = tf.matmul(perspective, look_at)
 
+  def runTriangleTest(self, w_vector, target_image_name):
+    """Directly renders a rasterized triangle's barycentric coordinates.
+
+    Tests only the kernel (rasterize_triangles_module).
+
+    Args:
+      w_vector: 3 element vector of w components to scale triangle vertices.
+      target_image_name: image file name to compare result against.
+    """
+    clip_init = np.array(
+        [[-0.5, -0.5, 0.8, 1.0], [0.0, 0.5, 0.3, 1.0], [0.5, -0.5, 0.3, 1.0]],
+        dtype=np.float32)
+    clip_init = clip_init * np.reshape(
+        np.array(w_vector, dtype=np.float32), [3, 1])
+
+    clip_coordinates = tf.constant(clip_init)
+    triangles = tf.constant([[0, 1, 2]], dtype=tf.int32)
+
+    rendered_coordinates, _, _ = (
+        rasterize_triangles.rasterize_triangles_module.rasterize_triangles(
+            clip_coordinates, triangles, self.image_width, self.image_height))
+    rendered_coordinates = tf.concat(
+        [rendered_coordinates,
+         tf.ones([self.image_height, self.image_width, 1])], axis=2)
+    with self.test_session() as sess:
+      image = rendered_coordinates.eval()
+      baseline_image_path = os.path.join(self.test_data_directory,
+                                         target_image_name)
+      test_utils.expect_image_file_and_render_are_near(
+          self, sess, baseline_image_path, image)
+
+  def testRendersSimpleTriangle(self):
+    self.runTriangleTest((1.0, 1.0, 1.0), 'Simple_Triangle.png')
+
+  def testRendersPerspectiveCorrectTriangle(self):
+    self.runTriangleTest((0.2, 0.5, 2.0), 'Perspective_Corrected_Triangle.png')
+
+  def testRendersSimpleCube(self):
+    """Renders a simple cube to test the kernel and python wrapper."""
     vertex_rgb = (self.cube_vertex_positions * 0.5 + 0.5)
     vertex_rgba = tf.concat([vertex_rgb, tf.ones([8, 1])], axis=1)
-
-    projection = tf.matmul(perspective, look_at)
     background_value = [0.0, 0.0, 0.0, 0.0]
 
-    rendered = rasterize_triangles.rasterize_triangles(
+    rendered = rasterize_triangles.rasterize(
         tf.expand_dims(self.cube_vertex_positions, axis=0),
-        tf.expand_dims(vertex_rgba, axis=0), self.cube_triangles, projection,
-        image_width, image_height, background_value)
+        tf.expand_dims(vertex_rgba, axis=0), self.cube_triangles,
+        self.projection, self.image_width, self.image_height, background_value)
 
     with self.test_session() as sess:
-      image = sess.run(rendered, feed_dict={})[0,...]
+      image = rendered.eval()[0,...]
       target_image_name = 'Unlit_Cube_0.png'
       baseline_image_path = os.path.join(self.test_data_directory,
                                          target_image_name)
@@ -113,29 +120,26 @@ class RenderTest(tf.test.TestCase):
     easy to check which entries of the Jacobian might not make sense without
     worrying about corner cases.
     """
-    image_height = 480
-    image_width = 640
     test_pixel_x = 325
     test_pixel_y = 245
 
-    normalized_device_coordinates = tf.placeholder(tf.float32, shape=[3, 3])
+    clip_coordinates = tf.placeholder(tf.float32, shape=[3, 4])
 
     triangles = tf.constant([[0, 1, 2]], dtype=tf.int32)
 
     barycentric_coordinates, _, _ = (
         rasterize_triangles.rasterize_triangles_module.rasterize_triangles(
-            normalized_device_coordinates, triangles, image_width,
-            image_height))
+            clip_coordinates, triangles, self.image_width, self.image_height))
 
     pixels_to_compare = barycentric_coordinates[
         test_pixel_y:test_pixel_y + 1, test_pixel_x:test_pixel_x + 1, :]
 
     with self.test_session():
       ndc_init = np.array(
-          [[-0.5, -0.5, 0.8], [0.0, 0.5, 0.3], [0.5, -0.5, 0.3]],
+          [[-0.5, -0.5, 0.8, 1.0], [0.0, 0.5, 0.3, 1.0], [0.5, -0.5, 0.3, 1.0]],
           dtype=np.float32)
       theoretical, numerical = tf.test.compute_gradient(
-          normalized_device_coordinates, (3, 3),
+          clip_coordinates, (3, 4),
           pixels_to_compare, (1, 1, 3),
           x_init_value=ndc_init,
           delta=4e-2)
@@ -149,30 +153,29 @@ class RenderTest(tf.test.TestCase):
     image_height = 21
     image_width = 28
 
-    normalized_device_coordinates = tf.placeholder(tf.float32, shape=[8, 3])
+    clip_coordinates = tf.placeholder(tf.float32, shape=[8, 4])
 
     barycentric_coordinates, _, _ = (
         rasterize_triangles.rasterize_triangles_module.rasterize_triangles(
-            normalized_device_coordinates, self.cube_triangles, image_width,
-            image_height))
+            clip_coordinates, self.cube_triangles, image_width, image_height))
 
     with self.test_session():
       # Precomputed transformation of the simple cube to normalized device
       # coordinates, in order to isolate the rasterization gradient.
       # pyformat: disable
       ndc_init = np.array(
-          [[-0.43889722, -0.53184521, 0.85293502],
-           [-0.37635487, 0.22206162, 0.90555805],
-           [-0.22849123, 0.76811147, 0.80993629],
-           [-0.2805393, -0.14092168, 0.71602166],
-           [0.18631913, -0.62634289, 0.88603103],
-           [0.16183566, 0.08129397, 0.93020856],
-           [0.44147962, 0.53497446, 0.85076219],
-           [0.53008741, -0.31276882, 0.77620775]],
+          [[-0.43889722, -0.53184521, 0.85293502, 1.0],
+           [-0.37635487, 0.22206162, 0.90555805, 1.0],
+           [-0.22849123, 0.76811147, 0.80993629, 1.0],
+           [-0.2805393, -0.14092168, 0.71602166, 1.0],
+           [0.18631913, -0.62634289, 0.88603103, 1.0],
+           [0.16183566, 0.08129397, 0.93020856, 1.0],
+           [0.44147962, 0.53497446, 0.85076219, 1.0],
+           [0.53008741, -0.31276882, 0.77620775, 1.0]],
           dtype=np.float32)
       # pyformat: enable
       theoretical, numerical = tf.test.compute_gradient(
-          normalized_device_coordinates, (8, 3),
+          clip_coordinates, (8, 4),
           barycentric_coordinates, (image_height, image_width, 3),
           x_init_value=ndc_init,
           delta=4e-2)

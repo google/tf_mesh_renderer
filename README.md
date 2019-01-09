@@ -24,6 +24,9 @@ the mesh is smooth. The main source of error occurs at occlusion boundaries, and
 particularly at the edge of an open mesh, where the background appears opposite
 the triangle's edge.
 
+The algorithm implemented is described by Olano and Greer, "Triangle Scan
+Conversion using 2D Homogeneous Coordinates," HWWS 1997.
+
 How to Build
 ------------
 

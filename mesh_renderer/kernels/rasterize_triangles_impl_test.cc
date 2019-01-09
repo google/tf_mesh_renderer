@@ -94,12 +94,22 @@ class RasterizeTrianglesImplTest : public ::testing::Test {
                            barycentrics_buffer_.data(), z_buffer_.data());
   }
 
+  // Expects that the sum of barycentric weights at a pixel is close to a
+  // given value.
+  void ExpectBarycentricSumIsNear(int x, int y, float expected) const {
+    constexpr float kEpsilon = 1e-6f;
+    auto it = barycentrics_buffer_.begin() + y * image_width_ * 3 + x * 3;
+    EXPECT_NEAR(*it + *(it + 1) + *(it + 2), expected, kEpsilon);
+  }
   // Expects that a pixel is covered by verifying that its barycentric
   // coordinates sum to one.
   void ExpectIsCovered(int x, int y) const {
-    constexpr float kEpsilon = 1e-6f;
-    auto it = barycentrics_buffer_.begin() + y * image_width_ * 3 + x * 3;
-    EXPECT_NEAR(*it + *(it + 1) + *(it + 2), 1.0, kEpsilon);
+    ExpectBarycentricSumIsNear(x, y, 1.0);
+  }
+  // Expects that a pixel is not covered by verifying that its barycentric
+  // coordinates sum to zero.
+  void ExpectIsNotCovered(int x, int y) const {
+    ExpectBarycentricSumIsNear(x, y, 0.0);
   }
 
   int image_height_ = 480;
@@ -110,8 +120,8 @@ class RasterizeTrianglesImplTest : public ::testing::Test {
 };
 
 TEST_F(RasterizeTrianglesImplTest, CanRasterizeTriangle) {
-  const std::vector<float> vertices = {-0.5, -0.5, 0.8,  0.0, 0.5,
-                                       0.3,  0.5,  -0.5, 0.3};
+  const std::vector<float> vertices = {-0.5, -0.5, 0.8, 1.0,  0.0, 0.5,
+                                       0.3,  1.0,  0.5, -0.5, 0.3, 1.0};
   const std::vector<int32> triangles = {0, 1, 2};
 
   CallRasterizeTrianglesImpl(vertices.data(), triangles.data(), 1);
@@ -119,9 +129,38 @@ TEST_F(RasterizeTrianglesImplTest, CanRasterizeTriangle) {
                                   "triangle", "simple triangle does not match");
 }
 
+TEST_F(RasterizeTrianglesImplTest, CanRasterizeExternalTriangle) {
+  const std::vector<float> vertices = {-0.5, -0.5, 0.0, 1.0,  0.0, -0.5,
+                                       0.0,  -1.0, 0.5, -0.5, 0.0, 1.0};
+  const std::vector<int32> triangles = {0, 1, 2};
+
+  CallRasterizeTrianglesImpl(vertices.data(), triangles.data(), 1);
+
+  ExpectImageFileAndImageAreEqual("External_Triangle.png",
+                                  barycentrics_buffer_, "external triangle",
+                                  "external triangle does not match");
+}
+
+TEST_F(RasterizeTrianglesImplTest, CanRasterizeCameraInsideBox) {
+  const std::vector<float> vertices = {
+      -1.0, -1.0, 0.0, 2.0, 1.0, -1.0, 0.0,  2.0, 1.0,  1.0, 0.0,
+      2.0,  -1.0, 1.0, 0.0, 2.0, -1.0, -1.0, 0.0, -2.0, 1.0, -1.0,
+      0.0,  -2.0, 1.0, 1.0, 0.0, -2.0, -1.0, 1.0, 0.0,  -2.0};
+  const std::vector<int32> triangles = {0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7,
+                                        2, 3, 7, 2, 7, 6, 1, 0, 4, 1, 4, 5,
+                                        0, 3, 7, 0, 7, 4, 1, 2, 6, 1, 6, 5};
+
+  CallRasterizeTrianglesImpl(vertices.data(), triangles.data(), 12);
+
+  ExpectImageFileAndImageAreEqual("Inside_Box.png",
+                                  barycentrics_buffer_, "camera inside box",
+                                  "camera inside box does not match");
+}
+
 TEST_F(RasterizeTrianglesImplTest, CanRasterizeTetrahedron) {
-  const std::vector<float> vertices = {-0.5, -0.5, 0.8, 0.0, 0.5, 0.3,
-                                       0.5,  -0.5, 0.3, 0.0, 0.0, 0.0};
+  const std::vector<float> vertices = {-0.5, -0.5, 0.8, 1.0,  0.0, 0.5,
+                                       0.3,  1.0,  0.5, -0.5, 0.3, 1.0,
+                                       0.0,  0.0,  0.0, 1.0};
   const std::vector<int32> triangles = {0, 2, 1, 0, 1, 3, 1, 2, 3, 2, 0, 3};
 
   CallRasterizeTrianglesImpl(vertices.data(), triangles.data(), 4);
@@ -129,6 +168,29 @@ TEST_F(RasterizeTrianglesImplTest, CanRasterizeTetrahedron) {
   ExpectImageFileAndImageAreEqual("Simple_Tetrahedron.png",
                                   barycentrics_buffer_, "tetrahedron",
                                   "simple tetrahedron does not match");
+}
+
+TEST_F(RasterizeTrianglesImplTest, CanRasterizeCube) {
+  // Vertex values were obtained by dumping the clip-space vertex values from
+  // the renderSimpleCube test in ../rasterize_triangles_test.py.
+  const std::vector<float> vertices = {
+      -2.60648608, -3.22707772,  6.85085106, 6.85714293,
+      -1.30324292, -0.992946863, 8.56856918, 8.5714283,
+      -1.30324292, 3.97178817,   7.70971,    7.71428585,
+      -2.60648608, 1.73765731,   5.991992,   6,
+      1.30324292,  -3.97178817,  6.27827835, 6.28571415,
+      2.60648608,  -1.73765731,  7.99599648, 8,
+      2.60648608,  3.22707772,   7.13713741, 7.14285707,
+      1.30324292,  0.992946863,  5.41941929, 5.4285717};
+
+  const std::vector<int32> triangles = {0, 1, 2, 2, 3, 0, 3, 2, 6, 6, 7, 3,
+                                        7, 6, 5, 5, 4, 7, 4, 5, 1, 1, 0, 4,
+                                        5, 6, 2, 2, 1, 5, 7, 4, 0, 0, 3, 7};
+
+  CallRasterizeTrianglesImpl(vertices.data(), triangles.data(), 12);
+
+  ExpectImageFileAndImageAreEqual("Barycentrics_Cube.png",
+      barycentrics_buffer_, "cube", "cube does not match");
 }
 
 TEST_F(RasterizeTrianglesImplTest, WorksWhenPixelIsOnTriangleEdge) {
@@ -139,8 +201,8 @@ TEST_F(RasterizeTrianglesImplTest, WorksWhenPixelIsOnTriangleEdge) {
   const float x_ndc = 0.0;
   constexpr int yPixel = 5;
 
-  const std::vector<float> vertices = {x_ndc, -1.0, 0.5,  x_ndc, 1.0,
-                                       0.5,   0.5,  -1.0, 0.5};
+  const std::vector<float> vertices = {x_ndc, -1.0, 0.5, 1.0,  x_ndc, 1.0,
+                                       0.5,   1.0,  0.5, -1.0, 0.5,   1.0};
   {
     const std::vector<int32> triangles = {0, 1, 2};
 
@@ -161,8 +223,9 @@ TEST_F(RasterizeTrianglesImplTest, WorksWhenPixelIsOnTriangleEdge) {
 TEST_F(RasterizeTrianglesImplTest, CoversEdgePixelsOfImage) {
   // Verifies that the pixels along image edges are correct covered.
 
-  const std::vector<float> vertices = {-1.0, -1.0, 0.0, 1.0,  -1.0, 0.0,
-                                       1.0,  1.0,  0.0, -1.0, 1.0,  0.0};
+  const std::vector<float> vertices = {-1.0, -1.0, 0.0, 1.0, 1.0, -1.0,
+                                       0.0,  1.0,  1.0, 1.0, 0.0, 1.0,
+                                       -1.0, 1.0,  0.0, 1.0};
   const std::vector<int32> triangles = {0, 1, 2, 0, 2, 3};
 
   CallRasterizeTrianglesImpl(vertices.data(), triangles.data(), 2);
@@ -171,6 +234,20 @@ TEST_F(RasterizeTrianglesImplTest, CoversEdgePixelsOfImage) {
   ExpectIsCovered(image_width_ - 1, 0);
   ExpectIsCovered(image_width_ - 1, image_height_ - 1);
   ExpectIsCovered(0, image_height_ - 1);
+}
+
+TEST_F(RasterizeTrianglesImplTest, PixelOnDegenerateTriangleIsNotInside) {
+  // Verifies that a pixel lying exactly on a triangle with zero area is
+  // counted as lying outside the triangle.
+  image_width_ = 1;
+  image_height_ = 1;
+  const std::vector<float> vertices = {-1.0, -1.0, 0.0, 1.0, 1.0, 1.0,
+                                       0.0,  1.0,  0.0, 0.0, 0.0, 1.0};
+  const std::vector<int32> triangles = {0, 1, 2};
+
+  CallRasterizeTrianglesImpl(vertices.data(), triangles.data(), 1);
+
+  ExpectIsNotCovered(0, 0);
 }
 
 }  // namespace

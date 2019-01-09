@@ -25,11 +25,11 @@ typedef long long int64;
 // Computes the triangle id, barycentric coordinates, and z-buffer at each pixel
 // in the image.
 //
-// vertices: A flattened 2D array with 3*vertex_count elements.
-//     Each contiguous triplet is the XYZ location of the vertex with that
-//     triplet's id. The coordinates are assumed to be OpenGL-style Normalized
-//     Device Coordinates where X points right, Y points up, Z points away, and
-//     all vertices lie in the cube with corners at (-1,-1,-1) and (1,1,1).
+// vertices: A flattened 2D array with 4*vertex_count elements.
+//     Each contiguous triplet is the XYZW location of the vertex with that
+//     triplet's id. The coordinates are assumed to be OpenGL-style clip-space
+//     (i.e., post-projection, pre-divide), where X points right, Y points up,
+//     Z points away.
 // triangles: A flattened 2D array with 3*triangle_count elements.
 //     Each contiguous triplet is the three vertex ids indexing into vertices
 //     describing one triangle with clockwise winding.

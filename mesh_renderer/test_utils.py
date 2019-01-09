@@ -117,7 +117,7 @@ def expect_image_file_and_render_are_near(test_instance,
              (baseline_path, outlier_fraction, max_outlier_fraction, result_output_path))
 
   if not images_match:
-    result_bytes = sess.run(tf.image.encode_png(result_image))
+    result_bytes = sess.run(tf.image.encode_png(result_image*255.0))
     with open(result_output_path, 'wb') as output_file:
       output_file.write(result_bytes)
 

@@ -45,8 +45,8 @@ REGISTER_OP("RasterizeTriangles")
     .Doc(R"doc(
 Implements a rasterization kernel for rendering mesh geometry.
 
-vertices: 2-D tensor with shape [vertex_count, 3]. The 3-D positions of the mesh
-  vertices in Normalized Device Coordinates.
+vertices: 2-D tensor with shape [vertex_count, 4]. The 3-D positions of the mesh
+  vertices in clip-space (XYZW).
 triangles: 2-D tensor with shape [triangle_count, 3]. Each row is a tuple of
   indices into vertices specifying a triangle to be drawn. The triangle has an
   outward facing normal when the given indices appear in a clockwise winding to
@@ -91,9 +91,9 @@ class RasterizeTrianglesOp : public OpKernel {
     const Tensor& vertices_tensor = context->input(0);
     OP_REQUIRES(
         context,
-        PartialTensorShape({-1, 3}).IsCompatibleWith(vertices_tensor.shape()),
+        PartialTensorShape({-1, 4}).IsCompatibleWith(vertices_tensor.shape()),
         InvalidArgument(
-            "RasterizeTriangles expects vertices to have shape (-1, 3)."));
+            "RasterizeTriangles expects vertices to have shape (-1, 4)."));
     auto vertices_flat = vertices_tensor.flat<float>();
     const float* vertices = vertices_flat.data();
 

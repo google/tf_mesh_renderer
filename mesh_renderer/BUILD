@@ -34,6 +34,9 @@ py_library(
 py_library(
     name = "rasterize_triangles",
     srcs = ["rasterize_triangles.py"],
+    deps = [
+        ":camera_utils",
+    ],
 )
 
 py_test(

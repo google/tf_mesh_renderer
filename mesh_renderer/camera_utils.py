@@ -82,7 +82,7 @@ def look_at(eye, center, world_up):
   batch_size = center.shape[0].value
   vector_degeneracy_cutoff = 1e-6
   forward = center - eye
-  forward_norm = tf.norm(forward, ord='euclidean', axis=1, keep_dims=True)
+  forward_norm = tf.norm(forward, ord='euclidean', axis=1, keepdims=True)
   tf.assert_greater(
       forward_norm,
       vector_degeneracy_cutoff,
@@ -90,7 +90,7 @@ def look_at(eye, center, world_up):
   forward = tf.divide(forward, forward_norm)
 
   to_side = tf.cross(forward, world_up)
-  to_side_norm = tf.norm(to_side, ord='euclidean', axis=1, keep_dims=True)
+  to_side_norm = tf.norm(to_side, ord='euclidean', axis=1, keepdims=True)
   tf.assert_greater(
       to_side_norm,
       vector_degeneracy_cutoff,
@@ -150,3 +150,34 @@ def euler_matrices(angles):
   # pyformat: enable
   reshaped = tf.reshape(flattened, [4, 4, -1])
   return tf.transpose(reshaped, [2, 0, 1])
+
+
+def transform_homogeneous(matrices, vertices):
+  """Applies batched 4x4 homogenous matrix transformations to 3-D vertices.
+
+  The vertices are input and output as as row-major, but are interpreted as
+  column vectors multiplied on the right-hand side of the matrices. More
+  explicitly, this function computes (MV^T)^T.
+  Vertices are assumed to be xyz, and are extended to xyzw with w=1.
+
+  Args:
+    matrices: a [batch_size, 4, 4] tensor of matrices.
+    vertices: a [batch_size, N, 3] tensor of xyz vertices.
+
+  Returns:
+    a [batch_size, N, 4] tensor of xyzw vertices.
+
+  Raises:
+    ValueError: if matrices or vertices have the wrong number of dimensions.
+  """
+  if len(matrices.shape) != 3:
+    raise ValueError(
+        'matrices must have 3 dimensions (missing batch dimension?)')
+  if len(vertices.shape) != 3:
+    raise ValueError(
+        'vertices must have 3 dimensions (missing batch dimension?)')
+  homogeneous_coord = tf.ones(
+      [tf.shape(vertices)[0], tf.shape(vertices)[1], 1], dtype=tf.float32)
+  vertices_homogeneous = tf.concat([vertices, homogeneous_coord], 2)
+
+  return tf.matmul(vertices_homogeneous, matrices, transpose_b=True)

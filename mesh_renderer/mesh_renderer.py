@@ -368,7 +368,7 @@ def mesh_renderer(vertices,
 
   clip_space_transforms = tf.matmul(perspective_transforms, camera_matrices)
 
-  pixel_attributes = rasterize_triangles.rasterize_triangles(
+  pixel_attributes = rasterize_triangles.rasterize(
       vertices, vertex_attributes, triangles, clip_space_transforms,
       image_width, image_height, [-1] * vertex_attributes.shape[2].value)
 
