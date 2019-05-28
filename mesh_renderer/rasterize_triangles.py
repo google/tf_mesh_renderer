@@ -103,27 +103,35 @@ def rasterize_clip_space(clip_space_vertices, attributes, triangles,
     raise ValueError('Image height must be > 0.')
   if len(clip_space_vertices.shape) != 3:
     raise ValueError('The vertex buffer must be 3D.')
-  batch_size = clip_space_vertices.shape[0].value
+
   vertex_count = clip_space_vertices.shape[1].value
 
-  per_image_barycentric_coordinates = []
-  per_image_vertex_ids = []
-  for im in range(clip_space_vertices.shape[0]):
+  batch_size = tf.shape(clip_space_vertices)[0]
+  
+  per_image_barycentric_coordinates = tf.TensorArray(dtype=tf.float32, size=batch_size)
+  per_image_vertex_ids = tf.TensorArray(dtype=tf.int32, size=batch_size)
+
+  def condition(b, *args):
+    return b < batch_size
+
+  def iteration(b, per_image_barycentric_coordinates, per_image_vertex_ids):
     barycentric_coords, triangle_ids, _ = (
         rasterize_triangles_module.rasterize_triangles(
-            clip_space_vertices[im, :, :], triangles, image_width,
+            clip_space_vertices[b, :, :], triangles, image_width,
             image_height))
-    per_image_barycentric_coordinates.append(
-        tf.reshape(barycentric_coords, [-1, 3]))
+    per_image_barycentric_coordinates = per_image_barycentric_coordinates.write(b, tf.reshape(barycentric_coords, [-1, 3]))
 
-    # Gathers the vertex indices now because the indices don't contain a batch
-    # identifier, and reindexes the vertex ids to point to a (batch,vertex_id)
     vertex_ids = tf.gather(triangles, tf.reshape(triangle_ids, [-1]))
-    reindexed_ids = tf.add(vertex_ids, im * clip_space_vertices.shape[1].value)
-    per_image_vertex_ids.append(reindexed_ids)
+    reindexed_ids = tf.add(vertex_ids, b * clip_space_vertices.shape[1].value)
+    per_image_vertex_ids = per_image_vertex_ids.write(b, reindexed_ids)
 
-  barycentric_coordinates = tf.concat(per_image_barycentric_coordinates, axis=0)
-  vertex_ids = tf.concat(per_image_vertex_ids, axis=0)
+    return b+1, per_image_barycentric_coordinates, per_image_vertex_ids
+
+  b = tf.placeholder_with_default(0, shape=[])
+  _, per_image_barycentric_coordinates, per_image_vertex_ids = tf.while_loop(condition, iteration, [b, per_image_barycentric_coordinates, per_image_vertex_ids])
+
+  barycentric_coordinates = tf.reshape(per_image_barycentric_coordinates.stack(), [-1, 3])
+  vertex_ids = tf.reshape(per_image_vertex_ids.stack(), [-1, 3])
 
   # Indexes with each pixel's clip-space triangle's extrema (the pixel's
   # 'corner points') ids to get the relevant properties for deferred shading.
