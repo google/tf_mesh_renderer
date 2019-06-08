@@ -108,18 +108,22 @@ def rasterize_clip_space(clip_space_vertices, attributes, triangles,
 
   batch_size = tf.shape(clip_space_vertices)[0]
   
-  per_image_barycentric_coordinates = tf.TensorArray(dtype=tf.float32, size=batch_size)
+  per_image_barycentric_coordinates = tf.TensorArray(dtype=tf.float32,
+    size=batch_size)
   per_image_vertex_ids = tf.TensorArray(dtype=tf.int32, size=batch_size)
 
-  def condition(b, *args):
+  def batch_loop_condition(b, *args):
     return b < batch_size
 
-  def iteration(b, per_image_barycentric_coordinates, per_image_vertex_ids):
+  def batch_loop_iteration(b, per_image_barycentric_coordinates,
+    per_image_vertex_ids):
     barycentric_coords, triangle_ids, _ = (
         rasterize_triangles_module.rasterize_triangles(
             clip_space_vertices[b, :, :], triangles, image_width,
             image_height))
-    per_image_barycentric_coordinates = per_image_barycentric_coordinates.write(b, tf.reshape(barycentric_coords, [-1, 3]))
+    per_image_barycentric_coordinates = \
+      per_image_barycentric_coordinates.write(
+        b, tf.reshape(barycentric_coords, [-1, 3]))
 
     vertex_ids = tf.gather(triangles, tf.reshape(triangle_ids, [-1]))
     reindexed_ids = tf.add(vertex_ids, b * clip_space_vertices.shape[1].value)
@@ -127,10 +131,13 @@ def rasterize_clip_space(clip_space_vertices, attributes, triangles,
 
     return b+1, per_image_barycentric_coordinates, per_image_vertex_ids
 
-  b = tf.placeholder_with_default(0, shape=[])
-  _, per_image_barycentric_coordinates, per_image_vertex_ids = tf.while_loop(condition, iteration, [b, per_image_barycentric_coordinates, per_image_vertex_ids])
+  b = tf.constant(0)
+  _, per_image_barycentric_coordinates, per_image_vertex_ids = tf.while_loop(
+    batch_loop_condition, batch_loop_iteration,
+    [b, per_image_barycentric_coordinates, per_image_vertex_ids])
 
-  barycentric_coordinates = tf.reshape(per_image_barycentric_coordinates.stack(), [-1, 3])
+  barycentric_coordinates = tf.reshape(
+    per_image_barycentric_coordinates.stack(), [-1, 3])
   vertex_ids = tf.reshape(per_image_vertex_ids.stack(), [-1, 3])
 
   # Indexes with each pixel's clip-space triangle's extrema (the pixel's
