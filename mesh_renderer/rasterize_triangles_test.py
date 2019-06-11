@@ -41,21 +41,15 @@ class RenderTest(tf.test.TestCase):
          [4, 5, 1], [1, 0, 4], [5, 6, 2], [2, 1, 5], [7, 4, 0], [0, 3, 7]],
         dtype=tf.int32)
 
-    tf_float = lambda x: tf.constant(x, dtype=tf.float32)
-    # camera position:
-    eye = tf_float([[2.0, 3.0, 6.0]])
-    center = tf_float([[0.0, 0.0, 0.0]])
-    world_up = tf_float([[0.0, 1.0, 0.0]])
+    self.tf_float = lambda x: tf.constant(x, dtype=tf.float32)
 
     self.image_width = 640
     self.image_height = 480
 
-    look_at = camera_utils.look_at(eye, center, world_up)
-    perspective = camera_utils.perspective(
+    self.perspective = camera_utils.perspective(
         self.image_width / self.image_height,
-        tf_float([40.0]), tf_float([0.01]),
-        tf_float([10.0]))
-    self.projection = tf.matmul(perspective, look_at)
+        self.tf_float([40.0]), self.tf_float([0.01]),
+        self.tf_float([10.0]))
 
   def runTriangleTest(self, w_vector, target_image_name):
     """Directly renders a rasterized triangle's barycentric coordinates.
@@ -94,24 +88,37 @@ class RenderTest(tf.test.TestCase):
   def testRendersPerspectiveCorrectTriangle(self):
     self.runTriangleTest((0.2, 0.5, 2.0), 'Perspective_Corrected_Triangle.png')
 
-  def testRendersSimpleCube(self):
-    """Renders a simple cube to test the kernel and python wrapper."""
-    vertex_rgb = (self.cube_vertex_positions * 0.5 + 0.5)
-    vertex_rgba = tf.concat([vertex_rgb, tf.ones([8, 1])], axis=1)
-    background_value = [0.0, 0.0, 0.0, 0.0]
+  def testRendersTwoCubesInBatch(self):
+      """Renders a simple cube in two viewpoints to test the python wrapper."""
 
-    rendered = rasterize_triangles.rasterize(
-        tf.expand_dims(self.cube_vertex_positions, axis=0),
-        tf.expand_dims(vertex_rgba, axis=0), self.cube_triangles,
-        self.projection, self.image_width, self.image_height, background_value)
+      vertex_rgb = (self.cube_vertex_positions * 0.5 + 0.5)
+      vertex_rgba = tf.concat([vertex_rgb, tf.ones([8, 1])], axis=1)
 
-    with self.test_session() as sess:
-      image = rendered.eval()[0,...]
-      target_image_name = 'Unlit_Cube_0.png'
-      baseline_image_path = os.path.join(self.test_data_directory,
-                                         target_image_name)
-      test_utils.expect_image_file_and_render_are_near(
-          self, sess, baseline_image_path, image)
+      center = self.tf_float([[0.0, 0.0, 0.0]])
+      world_up = self.tf_float([[0.0, 1.0, 0.0]])
+      look_at_1 = camera_utils.look_at(self.tf_float([[2.0, 3.0, 6.0]]),
+          center, world_up)
+      look_at_2 = camera_utils.look_at(self.tf_float([[-3.0, 1.0, 6.0]]),
+          center, world_up)
+      projection_1 = tf.matmul(self.perspective, look_at_1)
+      projection_2 = tf.matmul(self.perspective, look_at_2)
+      projection = tf.concat([projection_1, projection_2], axis=0)
+      background_value = [0.0, 0.0, 0.0, 0.0]
+
+      rendered = rasterize_triangles.rasterize(
+          tf.stack([self.cube_vertex_positions, self.cube_vertex_positions]),
+          tf.stack([vertex_rgba, vertex_rgba]), self.cube_triangles, projection,
+          self.image_width, self.image_height, background_value)
+
+      with self.test_session() as sess:
+        images = sess.run(rendered, feed_dict={})
+        for i in (0, 1):
+          image = images[i, :, :, :]
+          baseline_image_name = 'Unlit_Cube_{}.png'.format(i)
+          baseline_image_path = os.path.join(self.test_data_directory,
+                                            baseline_image_name)
+          test_utils.expect_image_file_and_render_are_near(
+            self, sess, baseline_image_path, image)
 
   def testSimpleTriangleGradientComputation(self):
     """Verifies the Jacobian matrix for a single pixel.
