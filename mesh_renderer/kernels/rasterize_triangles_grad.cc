@@ -201,7 +201,7 @@ namespace tf_mesh_renderer {
 
         // Values of edge equations and inverse w at the current pixel.
         const float edge0_over_w = x2 * db0_dx + y2 * db0_dy + w2 * db0_dw;
-        const float edge1_over_w = x2 * db1_dx + y2 * db1_dy + w2 * db1_dw;
+        const float edge1_over_w = x0 * db1_dx + y0 * db1_dy + w0 * db1_dw;
         const float edge2_over_w = x1 * db2_dx + y1 * db2_dy + w1 * db2_dw;
         const float w_inv = edge0_over_w + edge1_over_w + edge2_over_w;
 
