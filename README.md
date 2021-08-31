@@ -2,6 +2,12 @@ This is a differentiable, 3D mesh renderer using TensorFlow.
 
 This is not an official Google product.
 
+**Note:** as of August 2021, these operations are available in [TensorFlow Graphics](https://www.tensorflow.org/graphics/api_docs/python/tfg/rendering/triangle_rasterizer/rasterize)
+with the choice of CPU (originally implemented here) and OpenGL backends. 
+TensorFlow Graphics also includes [rasterize-then-splat](https://www.tensorflow.org/graphics/api_docs/python/tfg/rendering/splat/rasterize_then_splat), an algorithm that
+provides derivatives at occlusion boundaries, unlike this code. We recommend
+using TensorFlow Graphics instead of this library.
+
 The interface to the renderer is provided by mesh_renderer.py and
 rasterize_triangles.py, which provide TensorFlow Ops that can be added to a
 TensorFlow graph. The internals of the renderer are handled by a C++ kernel.
